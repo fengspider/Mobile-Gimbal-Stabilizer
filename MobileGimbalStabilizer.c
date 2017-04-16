@@ -1,6 +1,7 @@
-         #define IMU_WRITE 0b11010000  // Write Address      AD0=0
+        #define IMU_WRITE 0b11010000  // Write Address      AD0=0
          #define IMU_READ 0b11010001   // Read Address       AD0=0
-         
+            #include "six_axis_comp_filter.c"
+         #include "six_axis_comp_filter.h"
          unsigned char TempH;
          unsigned char TempL;
 void IMU_Init()
@@ -69,29 +70,4 @@ void main() {
      IMU_Read2(0x43,GYRO_X);
      }
      
-
 }
-
- /* First Trial
-   I2C1_Start();
-     //Write ACC X Address
-     I2C1_Wr(IMU_WRITE);
-     I2C1_Wr(0x3B);
-     //Read ACC X Data
-     I2C1_Start();              // The Data sheet states that we should "start", we are not sure if we should "Restart"
-     I2C1_Wr(IMU_READ);
-     TempH=I2C1_Rd(1);
-     TempL=I2C1_Rd(0);
-     ACC_X=TempH<<8 | TempL;
-     I2C1_Repeated_Start();
-
-     //Write GYRO X Address
-     I2C1_Wr(IMU_WRITE);
-     I2C1_Wr(0x43);
-     //Read GYRO X Data
-     I2C1_Start();
-     I2C1_Wr(IMU_READ);
-     TempH=I2C1_Rd(1);
-     TempL=I2C1_Rd(0);
-     GYRO_X=TempH<<8 | TempL;
-     I2C_Stop();*/
