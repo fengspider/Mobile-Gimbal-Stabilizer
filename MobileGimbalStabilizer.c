@@ -1,5 +1,6 @@
         #define IMU_WRITE 0b11010000  // Write Address      AD0=0
          #define IMU_READ 0b11010001   // Read Address       AD0=0
+         #define  PICFrequency 4000000
          unsigned char word [16];
          unsigned char title [16];
          unsigned char TempH;
@@ -51,9 +52,9 @@ signed int getAccAngle(signed int ACC_sub,signed int ACC)
      return acos(ACC_sub/ACC);
 }
 void main() {
-     float ACC_X;
-     float ACC_Y;
-     float ACC_Z;
+     float RACC_X;
+     float RACC_Y;
+     float RACC_Z;
      
      float Aax;
      float Aay;
@@ -64,6 +65,26 @@ void main() {
      float GYRO_Y;
      float GYRO_Z;
      
+     float Axz;
+     float Ayz;
+     
+     float RxEst;
+     float RyEst;
+     float RzEst;
+     
+     float REst;
+     
+     char firstSample=1;
+     
+     char signRzGyro;
+     
+     float wGyro;
+     
+     unsigned long lastSeconds;
+     unsigned long newSeconds;
+     unsigned long dt;
+     
+     T1CON=0b00000001;
      I2C1_Init(400000);      //Fast Frequency(400K), we could use 100K also
      TRISC = 0x00;           //TX o/p
      UART1_Init(9615);       //Baud rate
@@ -71,34 +92,87 @@ void main() {
      IMU_Init();
      IMU_Write(0x1A, 0x03);         //CONFIG Register, Digital Low Pass Filter: 3 *MIT*
     while(1)
-     {
-     ACC_X=(float)IMU_Read(0x3B)/2048.0;
-     print(ACC_X,"X.acce:");
-     
-     GYRO_X=(float)IMU_Read(0x43)/ 131.0;
-     print(GYRO_X,"X.Gyro:");
-     
-     ACC_Y=(float)IMU_Read(0x3D)/2048.0;
-     print(ACC_Y,"Y.acce:");
-     
-     GYRO_Y=(float)IMU_Read(0x45)/ 131.0;
-     print(GYRO_Y,"Y.Gyro:");
-     
-     ACC_Z=(float)IMU_Read(0x3F)/2048.0;
-     print(ACC_Z,"Z.acce:");
-     
-     GYRO_Z=(float)IMU_Read(0x47)/ 131.0;
-     print(GYRO_Z,"Z.Gyro:");
-     
-     Racc= SQRT(ACC_X*ACC_X + ACC_Y*ACC_Y + ACC_Z*ACC_Z)
+    {  
+       newSeconds= TMR1H<<8 | TMR1L;         //Getting time elapsed since last reading (Delta T)
+       newSeconds*=(4*(1/PICFrequency)*1);    //Transforming from Ticks to Seconds for TMR1 Prescaler of 1
+       dt= newSeconds -lastSeconds;
+       lastSeconds=  newSeconds;
+       
+       RACC_X=(float)IMU_Read(0x3B)/2048.0;
+       RACC_Y=(float)IMU_Read(0x3D)/2048.0;
+       RACC_Z=(float)IMU_Read(0x3F)/2048.0;
 
-     Aax= acos(ACC_X/Racc);
-     Aay= acos(ACC_Y/Racc);
-     Aaz= acos(ACC_Z/Racc);
+       //Getting the resultant
+       Racc= SQRT(RACC_X*RACC_X + RACC_Y*RACC_Y + RACC_Z*RACC_Z);
 
+       //Normalizing Accelerometer Resultant
+       RACC_X/=Racc;
+       RACC_Y/=Racc;
+       RACC_Z/=Racc;
 
+       if(firstSample)
+       {  //Our current estimate are the accelerometer readings
+         RxEst = RACC_X;
+         RyEst = RACC_Y;
+         RzEst = RACC_Z;
+       }
+       else
+       {
+          if(abs(RzEst) < 0.1)
+          {   //Rz is too small and because it is used as reference for computing Axz, Ayz it's error fluctuations will amplify leading to bad results
+              //in this case skip the gyro data and just use previous estimate
+              GYRO_X=RxEst;
+              GYRO_Y=RyEst;
+              GYRO_Z=RzEst;
+          }
+          else
+          {
+               GYRO_X=(float)IMU_Read(0x43)/ 131.0;
+               GYRO_Y=(float)IMU_Read(0x45)/ 131.0;
+               GYRO_Z=(float)IMU_Read(0x47)/ 131.0;
+               //Multiply Gyro's Angular velocity by time (seconds) to get Degrees
+               GYRO_X*=dt;
+               GYRO_Y*=dt;
+               //Get the angles Axz, Ayz
+               Axz=atan2(RxEst,RzEst) * 180/3.14; //convert from Rad to Degrees
+               Ayz=atan2(RyEst,RzEst) * 180/3.14; //convert from Rad to Degrees
+               //
+               Axz+=GYRO_X;
+               Ayz+=GYRO_Y;
+          }
 
+          signRzGyro = ( cos(Axz * 3.14 / 180) >=0 ) ? 1 : -1;
+          //Equations from Starlino website
+         /* GYRO_X= sin(Axz * 3.14 / 180);
+          GYRO_X/= sqrt( 1 + (cos(Axz * 3.14 / 180)*(cos(Axz * 3.14 / 180) * tan(Ayz * 3.14 / 180)*tan(Ayz * 3.14 / 180))));
+          GYRO_Y= sin(Ayz * 3.14 / 180);
+          GYRO_Y/=sqrt( 1 + (cos(Ayz * 3.14 / 180)*(cos(Ayz * 3.14 / 180) * tan(Axz * 3.14 / 180)*tan(Axz * 3.14 / 180)))); */
+          //Simplified version of the equations
+          GYRO_X= 1/SQRT (1  +   (1/tan(Axz * 3.14 / 180))*(1/tan(Axz * 3.14 / 180)) * (1/cos(Ayz * 3.14 / 180))*(1/cos(Ayz * 3.14 / 180)));
+          GYRO_Y= 1/SQRT (1  +   (1/tan(Ayz * 3.14 / 180))*(1/tan(Ayz * 3.14 / 180)) * (1/cos(Axz * 3.14 / 180))*(1/cos(Axz * 3.14 / 180)));
 
+          GYRO_Z  =  signRzGyro*sqrt(1-GYRO_X*GYRO_X-GYRO_Y*GYRO_Y);
+       }
+
+       //Combine the Acceleratmor and Gyroscope values
+       RxEst=(RACC_X + wGyro* GYRO_X) / (1 + wGyro);
+       RyEst=(RACC_Y + wGyro* GYRO_Y) / (1 + wGyro);
+       RzEst=(RACC_Z + wGyro* GYRO_Z) / (1 + wGyro);
+
+       REst= SQRT(RxEst*RxEst + RyEst*RyEst + RzEst*RzEst);
+
+       //Normalizing Accelerometer Resultant
+       RxEst/=REst;
+       RyEst/=REst;
+       RzEst/=REst;
+
+       Aax= acos(RxEst/REst);
+       Aay= acos(RyEst/REst);
+       Aaz= acos(RzEst/REst);
+
+       print(Aax,"Aax");
+       print(Aay,"Aay");
+       print(Aaz,"Aaz");
 
      }
 }
